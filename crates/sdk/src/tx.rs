@@ -2464,7 +2464,6 @@ pub async fn build_init_account(
     context: &impl Namada,
     args::TxInitAccount {
         tx: tx_args,
-        vp_code_path,
         tx_code_path,
         public_keys,
         threshold,
@@ -2472,8 +2471,6 @@ pub async fn build_init_account(
 ) -> Result<(Tx, SigningTxData)> {
     let signing_data =
         signing::aux_signing_data(context, tx_args, None, None).await?;
-
-    let vp_code_hash = query_wasm_code_hash_buf(context, vp_code_path).await?;
 
     let threshold = match threshold {
         Some(threshold) => *threshold,
@@ -2490,25 +2487,15 @@ pub async fn build_init_account(
 
     let data = InitAccount {
         public_keys: public_keys.clone(),
-        // We will add the hash inside the add_code_hash function
-        vp_code_hash: Hash::zero(),
         threshold,
     };
 
-    let add_code_hash = |tx: &mut Tx, data: &mut InitAccount| {
-        let extra_section_hash = tx.add_extra_section_from_hash(
-            vp_code_hash,
-            Some(vp_code_path.to_string_lossy().into_owned()),
-        );
-        data.vp_code_hash = extra_section_hash;
-        Ok(())
-    };
     build(
         context,
         tx_args,
         tx_code_path.clone(),
         data,
-        add_code_hash,
+        do_nothing,
         &signing_data.fee_payer,
         None,
     )

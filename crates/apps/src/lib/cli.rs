@@ -1208,8 +1208,8 @@ pub mod cmds {
         fn def() -> App {
             App::new(Self::CMD)
                 .about(
-                    "Send a signed transaction to update account's validity \
-                     predicate.",
+                    "Send a signed transaction to update account's threshold \
+                     or keys.",
                 )
                 .add_args::<args::TxUpdateAccount<args::CliTypes>>()
         }
@@ -3111,8 +3111,6 @@ pub mod args {
         arg_multi("account-keys");
     pub const VALIDATOR_CONSENSUS_KEY: ArgOpt<WalletPublicKey> =
         arg_opt("consensus-key");
-    pub const VALIDATOR_CODE_PATH: ArgOpt<PathBuf> =
-        arg_opt("validator-code-path");
     pub const VALIDATOR_ETH_COLD_KEY: ArgOpt<WalletPublicKey> =
         arg_opt("eth-cold-key");
     pub const VALIDATOR_ETH_HOT_KEY: ArgOpt<WalletPublicKey> =
@@ -3120,7 +3118,6 @@ pub mod args {
     pub const VALUE: Arg<String> = arg("value");
     pub const VOTER_OPT: ArgOpt<WalletAddress> = arg_opt("voter");
     pub const VIEWING_KEY: Arg<WalletViewingKey> = arg("key");
-    pub const VP: ArgOpt<String> = arg_opt("vp");
     pub const WALLET_ALIAS_FORCE: ArgFlag = flag("wallet-alias-force");
     pub const WASM_CHECKSUMS_PATH: Arg<PathBuf> = arg("wasm-checksums-path");
     pub const WASM_DIR: ArgOpt<PathBuf> = arg_opt("wasm-dir");
@@ -4045,7 +4042,6 @@ pub mod args {
             let chain_ctx = ctx.borrow_mut_chain_or_exit();
             TxInitAccount::<SdkTypes> {
                 tx,
-                vp_code_path: self.vp_code_path,
                 tx_code_path: self.tx_code_path,
                 public_keys: self
                     .public_keys
@@ -4060,15 +4056,11 @@ pub mod args {
     impl Args for TxInitAccount<CliTypes> {
         fn parse(matches: &ArgMatches) -> Self {
             let tx = Tx::parse(matches);
-            let vp_code_path = CODE_PATH_OPT
-                .parse(matches)
-                .unwrap_or_else(|| PathBuf::from(VP_USER_WASM));
             let tx_code_path = PathBuf::from(TX_INIT_ACCOUNT_WASM);
             let public_keys = PUBLIC_KEYS.parse(matches);
             let threshold = THRESHOLD.parse(matches);
             Self {
                 tx,
-                vp_code_path,
                 public_keys,
                 threshold,
                 tx_code_path,
@@ -4077,11 +4069,6 @@ pub mod args {
 
         fn def(app: App) -> App {
             app.add_args::<Tx<CliTypes>>()
-                .arg(CODE_PATH_OPT.def().help(
-                    "The path to the validity predicate WASM code to be used \
-                     for the new account. Uses the default user VP if none \
-                     specified.",
-                ))
                 .arg(PUBLIC_KEYS.def().help(
                     "A list public keys to be associated with the new account \
                      in hexadecimal encoding.",
@@ -4202,11 +4189,6 @@ pub mod args {
                 .arg(WEBSITE_OPT.def().help("The validator's website."))
                 .arg(DISCORD_OPT.def().help("The validator's discord handle."))
                 .arg(AVATAR_OPT.def().help("The validator's avatar."))
-                .arg(VALIDATOR_CODE_PATH.def().help(
-                    "The path to the validity predicate WASM code to be used \
-                     for the validator account. Uses the default validator VP \
-                     if none specified.",
-                ))
                 .arg(UNSAFE_DONT_ENCRYPT.def().help(
                     "UNSAFE: Do not encrypt the generated keypairs. Do not \
                      use this for keys used in a live network.",
@@ -4238,9 +4220,6 @@ pub mod args {
                 website: self.website,
                 discord_handle: self.discord_handle,
                 avatar: self.avatar,
-                validator_vp_code_path: self
-                    .validator_vp_code_path
-                    .to_path_buf(),
                 unsafe_dont_encrypt: self.unsafe_dont_encrypt,
                 tx_init_account_code_path: self
                     .tx_init_account_code_path
@@ -4269,9 +4248,6 @@ pub mod args {
             let website = WEBSITE_OPT.parse(matches);
             let discord_handle = DISCORD_OPT.parse(matches);
             let avatar = AVATAR_OPT.parse(matches);
-            let validator_vp_code_path = VALIDATOR_CODE_PATH
-                .parse(matches)
-                .unwrap_or_else(|| PathBuf::from(VP_USER_WASM));
             let unsafe_dont_encrypt = UNSAFE_DONT_ENCRYPT.parse(matches);
             let tx_init_account_code_path = PathBuf::from(TX_INIT_ACCOUNT_WASM);
             let tx_become_validator_code_path =
@@ -4293,7 +4269,6 @@ pub mod args {
                 website,
                 discord_handle,
                 avatar,
-                validator_vp_code_path,
                 unsafe_dont_encrypt,
                 tx_init_account_code_path,
                 tx_become_validator_code_path,
@@ -4346,11 +4321,6 @@ pub mod args {
                 .arg(WEBSITE_OPT.def().help("The validator's website."))
                 .arg(DISCORD_OPT.def().help("The validator's discord handle."))
                 .arg(AVATAR_OPT.def().help("The validator's avatar."))
-                .arg(VALIDATOR_CODE_PATH.def().help(
-                    "The path to the validity predicate WASM code to be used \
-                     for the validator account. Uses the default validator VP \
-                     if none specified.",
-                ))
                 .arg(UNSAFE_DONT_ENCRYPT.def().help(
                     "UNSAFE: Do not encrypt the generated keypairs. Do not \
                      use this for keys used in a live network.",
@@ -4399,11 +4369,6 @@ pub mod args {
 
         fn def(app: App) -> App {
             app.add_args::<Tx<CliTypes>>()
-                .arg(
-                    CODE_PATH_OPT.def().help(
-                        "The path to the new validity predicate WASM code.",
-                    ),
-                )
                 .arg(ADDRESS.def().help(
                     "The account's address. It's key is used to produce the \
                      signature.",
@@ -6825,7 +6790,6 @@ pub mod args {
 
     #[derive(Clone, Debug)]
     pub struct InitGenesisEstablishedAccount {
-        pub vp: String,
         pub wallet_aliases: Vec<String>,
         pub threshold: u8,
         pub output_path: PathBuf,
@@ -6833,14 +6797,11 @@ pub mod args {
 
     impl Args for InitGenesisEstablishedAccount {
         fn parse(matches: &ArgMatches) -> Self {
-            use crate::config::genesis::utils::VP_USER;
             let wallet_aliases = ALIAS_MANY.parse(matches);
-            let vp = VP.parse(matches).unwrap_or_else(|| VP_USER.to_string());
             let threshold = THRESHOLD.parse(matches).unwrap_or(1);
             let output_path = PATH.parse(matches);
             Self {
                 wallet_aliases,
-                vp,
                 threshold,
                 output_path,
             }
@@ -6855,9 +6816,6 @@ pub mod args {
                 "The minimum number of signatures to be provided for \
                  authorization. Must be less than or equal to the maximum \
                  number of key aliases provided.",
-            ))
-            .arg(VP.def().help(
-                "The validity predicate of the account. Defaults to `vp_user`.",
             ))
             .arg(PATH.def().help(
                 "The path of the .toml file to write the established account \
