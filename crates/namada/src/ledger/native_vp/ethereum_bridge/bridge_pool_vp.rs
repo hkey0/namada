@@ -649,7 +649,7 @@ where
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, feature = "namada-eth-bridge"))]
 mod test_bridge_pool_vp {
     use std::env::temp_dir;
 
