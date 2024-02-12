@@ -144,6 +144,7 @@ mod test_vote_extensions {
 
     use borsh_ext::BorshSerializeExt;
     use namada::eth_bridge::storage::bridge_pool;
+    use namada::eth_bridge::storage::eth_bridge_queries::is_bridge_comptime_enabled;
     use namada::ledger::eth_bridge::EthBridgeQueries;
     use namada::ledger::pos::PosQueries;
     use namada::proof_of_stake::storage::{
@@ -277,6 +278,11 @@ mod test_vote_extensions {
     /// done
     #[test]
     fn test_get_eth_events() {
+        if !is_bridge_comptime_enabled() {
+            // NOTE: this test doesn't work if the ethereum bridge
+            // is disabled at compile time.
+            return;
+        }
         let (mut shell, _, oracle, _) = setup();
         let event_1 = EthereumEvent::TransfersToEthereum {
             nonce: 0.into(),
@@ -347,6 +353,11 @@ mod test_vote_extensions {
     /// Test that Ethereum events signed by a non-validator are rejected
     #[test]
     fn test_eth_events_must_be_signed_by_validator() {
+        if !is_bridge_comptime_enabled() {
+            // NOTE: this test doesn't work if the ethereum bridge
+            // is disabled at compile time.
+            return;
+        }
         let (shell, _, _, _) = setup_at_height(3u64);
         let signing_key = gen_keypair();
         let address = shell
@@ -386,6 +397,11 @@ mod test_vote_extensions {
     /// change to the validator set.
     #[test]
     fn test_validate_eth_events_vexts() {
+        if !is_bridge_comptime_enabled() {
+            // NOTE: this test doesn't work if the ethereum bridge
+            // is disabled at compile time.
+            return;
+        }
         let (mut shell, _recv, _, _oracle_control_recv) = setup_at_height(3u64);
         let signing_key =
             shell.mode.get_protocol_key().expect("Test failed").clone();
@@ -502,6 +518,11 @@ mod test_vote_extensions {
     /// greater than latest block height.
     #[test]
     fn reject_incorrect_block_number() {
+        if !is_bridge_comptime_enabled() {
+            // NOTE: this test doesn't work if the ethereum bridge
+            // is disabled at compile time.
+            return;
+        }
         let (shell, _, _, _) = setup_at_height(3u64);
         let address = shell.mode.get_validator_address().unwrap().clone();
         #[allow(clippy::redundant_clone)]
@@ -538,6 +559,11 @@ mod test_vote_extensions {
     /// issued at genesis
     #[test]
     fn test_reject_genesis_vexts() {
+        if !is_bridge_comptime_enabled() {
+            // NOTE: this test doesn't work if the ethereum bridge
+            // is disabled at compile time.
+            return;
+        }
         let (shell, _, _, _) = setup();
         let address = shell.mode.get_validator_address().unwrap().clone();
         #[allow(clippy::redundant_clone)]
