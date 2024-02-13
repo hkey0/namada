@@ -3,11 +3,13 @@ use std::str::FromStr;
 
 use color_eyre::eyre::Result;
 use color_eyre::owo_colors::OwoColorize;
-use namada::state::StorageWrite;
+use namada::state::{StorageRead, StorageWrite};
 use namada::token;
+use namada::token::storage_key::masp_token_map_key;
 use namada_apps::node::ledger::shell::testing::client::run;
 use namada_apps::node::ledger::shell::testing::utils::{Bin, CapturedOutput};
 use namada_core::types::dec::Dec;
+use namada_core::types::masp::TokenMap;
 use namada_sdk::masp::fs::FsShieldedUtils;
 use test_log::test;
 
@@ -1464,11 +1466,24 @@ fn dynamic_assets() -> Result<()> {
     let btc = BTC.to_lowercase();
     let nam = NAM.to_lowercase();
 
+    let token_map_key = masp_token_map_key();
     let tokens = {
         // Only distribute rewards for NAM tokens
-        let storage = &mut node.shell.lock().unwrap().wl_storage.storage;
-        let tokens = storage.conversion_state.tokens.clone();
-        storage.conversion_state.tokens.retain(|k, _v| *k == nam);
+        let mut tokens: TokenMap = node
+            .shell
+            .lock()
+            .unwrap()
+            .wl_storage
+            .read(&token_map_key)
+            .unwrap()
+            .unwrap_or_default();
+        tokens.retain(|k, _v| *k == nam);
+        node.shell
+            .lock()
+            .unwrap()
+            .wl_storage
+            .write(&token_map_key, tokens.clone())
+            .unwrap();
         tokens
     };
     // Wait till epoch boundary
@@ -1534,11 +1549,21 @@ fn dynamic_assets() -> Result<()> {
     {
         // Start decoding and distributing shielded rewards for BTC in next
         // epoch
-        let storage = &mut node.shell.lock().unwrap().wl_storage.storage;
-        storage
-            .conversion_state
-            .tokens
-            .insert(btc.clone(), tokens[&btc].clone());
+        let mut tokens: TokenMap = node
+            .shell
+            .lock()
+            .unwrap()
+            .wl_storage
+            .read(&token_map_key)
+            .unwrap()
+            .unwrap_or_default();
+        tokens.insert(btc.clone(), tokens[&btc].clone());
+        node.shell
+            .lock()
+            .unwrap()
+            .wl_storage
+            .write(&token_map_key, tokens)
+            .unwrap();
     }
 
     // Wait till epoch boundary
@@ -1736,8 +1761,21 @@ fn dynamic_assets() -> Result<()> {
 
     {
         // Stop decoding and distributing shielded rewards for BTC in next epoch
-        let storage = &mut node.shell.lock().unwrap().wl_storage.storage;
-        storage.conversion_state.tokens.remove(&btc);
+        let mut tokens: TokenMap = node
+            .shell
+            .lock()
+            .unwrap()
+            .wl_storage
+            .read(&token_map_key)
+            .unwrap()
+            .unwrap_or_default();
+        tokens.remove(&btc);
+        node.shell
+            .lock()
+            .unwrap()
+            .wl_storage
+            .write(&token_map_key, tokens)
+            .unwrap();
     }
 
     // Wait till epoch boundary
