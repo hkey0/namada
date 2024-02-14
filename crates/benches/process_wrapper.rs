@@ -3,7 +3,7 @@ use namada::core::address;
 use namada::core::key::RefTo;
 use namada::core::storage::BlockHeight;
 use namada::core::time::DateTimeUtc;
-use namada::ledger::storage::TempWlStorage;
+use namada::ledger::storage::TempWlState;
 use namada::token::{Amount, DenominatedAmount, Transfer};
 use namada::tx::data::{Fee, WrapperTx};
 use namada::tx::Signature;
@@ -15,7 +15,7 @@ fn process_tx(c: &mut Criterion) {
     let mut shell = BenchShell::default();
     // Advance chain height to allow the inclusion of wrapper txs by the block
     // space allocator
-    shell.wl_storage.storage.last_block.as_mut().unwrap().height =
+    shell.state.in_mem_mut().last_block.as_mut().unwrap().height =
         BlockHeight(2);
 
     let mut tx = shell.generate_tx(
@@ -60,10 +60,10 @@ fn process_tx(c: &mut Criterion) {
         b.iter_batched(
             || {
                 (
-                    shell.wl_storage.storage.tx_queue.clone(),
+                    shell.state.in_mem().tx_queue.clone(),
                     // Prevent block out of gas and replay protection
-                    TempWlStorage::new(&shell.wl_storage.storage),
-                    ValidationMeta::from(&shell.wl_storage),
+                    &shell.state.with_temp_write_log(),
+                    ValidationMeta::from(&shell.state),
                     shell.vp_wasm_cache.clone(),
                     shell.tx_wasm_cache.clone(),
                     defaults::daewon_address(),

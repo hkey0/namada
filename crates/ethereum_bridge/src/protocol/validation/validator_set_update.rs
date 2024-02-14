@@ -2,7 +2,7 @@
 
 use namada_core::storage::Epoch;
 use namada_proof_of_stake::pos_queries::PosQueries;
-use namada_state::{DBIter, StorageHasher, WlStorage, DB};
+use namada_state::{DBIter, StorageHasher, WlState, DB};
 use namada_vote_ext::validator_set_update;
 
 use super::VoteExtensionError;
@@ -27,7 +27,7 @@ use crate::storage::eth_bridge_queries::EthBridgeQueries;
 ///  * The voting powers signed over were Ethereum ABI encoded, normalized to
 ///    `2^32`, and sorted in descending order.
 pub fn validate_valset_upd_vext<D, H>(
-    wl_storage: &WlStorage<D, H>,
+    state: &WlState<D, H>,
     ext: &validator_set_update::SignedVext,
     last_epoch: Epoch,
 ) -> Result<(), VoteExtensionError>
@@ -35,7 +35,7 @@ where
     D: 'static + DB + for<'iter> DBIter<'iter>,
     H: 'static + StorageHasher,
 {
-    if wl_storage.storage.last_block.is_none() {
+    if state.in_mem().last_block.is_none() {
         tracing::debug!(
             "Dropping validator set update vote extension issued at genesis"
         );
@@ -51,7 +51,7 @@ where
         );
         return Err(VoteExtensionError::UnexpectedEpoch);
     }
-    if wl_storage
+    if state
         .ethbridge_queries()
         .valset_upd_seen(signing_epoch.next())
     {
@@ -64,7 +64,7 @@ where
     }
     // verify if the new epoch validators' voting powers in storage match
     // the voting powers in the vote extension
-    for (eth_addr_book, namada_addr, namada_power) in wl_storage
+    for (eth_addr_book, namada_addr, namada_power) in state
         .ethbridge_queries()
         .get_consensus_eth_addresses(Some(signing_epoch.next()))
         .iter()
@@ -92,7 +92,7 @@ where
     }
     // get the public key associated with this validator
     let validator = &ext.data.validator_addr;
-    let pk = wl_storage
+    let pk = state
         .pos_queries()
         .read_validator_eth_hot_key(validator, Some(signing_epoch))
         .ok_or_else(|| {

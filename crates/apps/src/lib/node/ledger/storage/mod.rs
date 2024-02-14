@@ -9,14 +9,16 @@ use arse_merkle_tree::blake2b::Blake2bHasher;
 use arse_merkle_tree::traits::Hasher;
 use arse_merkle_tree::H256;
 use blake2b_rs::{Blake2b, Blake2bBuilder};
-use namada::state::{State, StorageHasher};
+use namada::state::StorageHasher;
+use namada_sdk::state::FullAccessState;
 
 #[derive(Default)]
 pub struct PersistentStorageHasher(Blake2bHasher);
 
 pub type PersistentDB = rocksdb::RocksDB;
 
-pub type PersistentStorage = State<PersistentDB, PersistentStorageHasher>;
+pub type PersistentState =
+    FullAccessState<PersistentDB, PersistentStorageHasher>;
 
 impl Hasher for PersistentStorageHasher {
     fn write_bytes(&mut self, h: &[u8]) {
@@ -66,12 +68,12 @@ mod tests {
     use namada::ledger::gas::STORAGE_ACCESS_GAS_PER_BYTE;
     use namada::ledger::ibc::storage::ibc_key;
     use namada::ledger::parameters::{EpochDuration, Parameters};
+    use namada::state::testing::TestState;
     use namada::state::write_log::WriteLog;
-    use namada::state::{
-        self, StorageRead, StorageWrite, StoreType, WlStorage, DB,
-    };
+    use namada::state::{self, StorageRead, StorageWrite, StoreType, DB};
     use namada::token::conversion::update_allowed_conversions;
     use namada::{decode, encode, parameters};
+    use namada_sdk::state::StateRead;
     use proptest::collection::vec;
     use proptest::prelude::*;
     use proptest::test_runner::Config;
@@ -84,7 +86,7 @@ mod tests {
     fn test_crud_value() {
         let db_path =
             TempDir::new().expect("Unable to create a temporary DB directory");
-        let mut storage = PersistentStorage::open(
+        let mut storage = PersistentState::open(
             db_path.path(),
             ChainId::default(),
             address::testing::nam(),
@@ -136,7 +138,7 @@ mod tests {
     fn test_commit_block() {
         let db_path =
             TempDir::new().expect("Unable to create a temporary DB directory");
-        let mut storage = PersistentStorage::open(
+        let mut storage = PersistentState::open(
             db_path.path(),
             ChainId::default(),
             address::testing::nam(),
@@ -145,12 +147,12 @@ mod tests {
             is_merklized_storage_key,
         );
         storage
+            .in_mem_mut()
             .begin_block(BlockHash::default(), BlockHeight(100))
             .expect("begin_block failed");
         let key = Key::parse("key").expect("cannot parse the key string");
         let value: u64 = 1;
         let value_bytes = encode(&value);
-        let mut wl_storage = WlStorage::new(WriteLog::default(), storage);
         // initialize parameter storage
         let params = Parameters {
             max_tx_bytes: 1024 * 1024,
@@ -172,33 +174,30 @@ mod tests {
             fee_unshielding_descriptions_limit: 0,
             minimum_gas_price: Default::default(),
         };
-        parameters::init_storage(&params, &mut wl_storage)
-            .expect("Test failed");
+        parameters::init_storage(&params, &mut storage).expect("Test failed");
         // insert and commit
-        wl_storage
-            .storage
+        storage
             .write(&key, value_bytes.clone())
             .expect("write failed");
-        wl_storage.storage.block.epoch = wl_storage.storage.block.epoch.next();
-        wl_storage
-            .storage
+        storage.in_mem_mut().block.epoch = storage.in_mem().block.epoch.next();
+        storage
+            .in_mem_mut()
             .block
             .pred_epochs
             .new_epoch(BlockHeight(100));
         // make wl_storage to update conversion for a new epoch
 
-        update_allowed_conversions(&mut wl_storage)
+        update_allowed_conversions(&mut storage)
             .expect("update conversions failed");
-        wl_storage.commit_block().expect("commit failed");
+        storage.commit_block().expect("commit failed");
 
         // save the last state and the storage
-        let root = wl_storage.storage.merkle_root().0;
-        let hash = wl_storage.storage.get_block_hash().0;
-        let address_gen = wl_storage.storage.address_gen.clone();
-        drop(wl_storage);
+        let root = storage.in_mem().merkle_root().0;
+        let hash = storage.in_mem().get_block_hash().0;
+        let address_gen = storage.in_mem().address_gen.clone();
 
         // load the last state
-        let mut storage = PersistentStorage::open(
+        let mut storage = PersistentState::open(
             db_path.path(),
             ChainId::default(),
             address::testing::nam(),
@@ -206,16 +205,13 @@ mod tests {
             None,
             is_merklized_storage_key,
         );
-        storage
-            .load_last_state()
-            .expect("loading the last state failed");
         let (loaded_root, height) =
-            storage.get_state().expect("no block exists");
+            storage.in_mem().get_state().expect("no block exists");
         assert_eq!(loaded_root.0, root);
         assert_eq!(height, 100);
-        assert_eq!(storage.get_block_hash().0, hash);
-        assert_eq!(storage.address_gen, address_gen);
-        let (val, _) = storage.read(&key).expect("read failed");
+        assert_eq!(storage.in_mem().get_block_hash().0, hash);
+        assert_eq!(storage.in_mem().address_gen, address_gen);
+        let (val, _) = storage.db_read(&key).expect("read failed");
         assert_eq!(val.expect("no value"), value_bytes);
     }
 
@@ -223,7 +219,7 @@ mod tests {
     fn test_iter() {
         let db_path =
             TempDir::new().expect("Unable to create a temporary DB directory");
-        let mut storage = PersistentStorage::open(
+        let mut storage = PersistentState::open(
             db_path.path(),
             ChainId::default(),
             address::testing::nam(),
@@ -231,9 +227,6 @@ mod tests {
             None,
             is_merklized_storage_key,
         );
-        storage
-            .begin_block(BlockHash::default(), BlockHeight(100))
-            .expect("begin_block failed");
 
         let mut expected = Vec::new();
         let prefix = Key::parse("prefix").expect("cannot parse the key string");
@@ -248,8 +241,8 @@ mod tests {
                 .expect("write failed");
             expected.push((key.to_string(), value_bytes));
         }
-        let batch = PersistentStorage::batch();
-        storage.commit_block(batch).expect("commit failed");
+
+        storage.commit_block().expect("commit failed");
 
         let (iter, gas) = storage.iter_prefix(&prefix);
         assert_eq!(gas, (prefix.len() as u64) * STORAGE_ACCESS_GAS_PER_BYTE);
@@ -270,7 +263,7 @@ mod tests {
     fn test_validity_predicate() {
         let db_path =
             TempDir::new().expect("Unable to create a temporary DB directory");
-        let mut storage = PersistentStorage::open(
+        let mut storage = PersistentState::open(
             db_path.path(),
             ChainId::default(),
             address::testing::nam(),
@@ -338,7 +331,7 @@ mod tests {
     ) -> namada::state::Result<()> {
         let db_path =
             TempDir::new().expect("Unable to create a temporary DB directory");
-        let mut storage = PersistentStorage::open(
+        let mut storage = PersistentState::open(
             db_path.path(),
             ChainId::default(),
             address::testing::nam(),
@@ -377,8 +370,8 @@ mod tests {
             } else {
                 storage.delete(&key)?;
             }
-            let batch = PersistentStorage::batch();
-            storage.commit_block(batch)?;
+
+            storage.commit_block()?;
         }
 
         // 2. We try to read from these heights to check that we get back
@@ -430,7 +423,7 @@ mod tests {
     ) -> namada::state::Result<()> {
         let db_path =
             TempDir::new().expect("Unable to create a temporary DB directory");
-        let mut storage = PersistentStorage::open(
+        let mut storage = PersistentState::open(
             db_path.path(),
             ChainId::default(),
             address::testing::nam(),
@@ -470,7 +463,7 @@ mod tests {
         storage.begin_block(hash, height)?;
         // Epoch 0
         storage.block.pred_epochs.new_epoch(height);
-        let mut batch = PersistentStorage::batch();
+        let mut batch = PersistentState::batch();
         for (height, key, write_type) in blocks_write_type.clone() {
             if height != storage.block.height {
                 // to check the root later
@@ -480,11 +473,11 @@ mod tests {
                     storage.block.epoch = storage.block.epoch.next();
                     storage.block.pred_epochs.new_epoch(storage.block.height);
                 }
-                storage.commit_block(batch)?;
+                storage.commit_block()?;
                 let hash = BlockHash::default();
                 storage
                     .begin_block(hash, storage.block.height.next_height())?;
-                batch = PersistentStorage::batch();
+                batch = PersistentState::batch();
             }
             match write_type {
                 0 => {
@@ -511,7 +504,7 @@ mod tests {
             }
         }
         roots.insert(storage.block.height, storage.merkle_root());
-        storage.commit_block(batch)?;
+        storage.commit_block()?;
 
         let mut current_state = HashMap::new();
         for i in 0..num_keys {
@@ -549,7 +542,7 @@ mod tests {
     fn test_prune_merkle_tree_stores() {
         let db_path =
             TempDir::new().expect("Unable to create a temporary DB directory");
-        let mut storage = PersistentStorage::open(
+        let mut storage = PersistentState::open(
             db_path.path(),
             ChainId::default(),
             address::testing::nam(),
@@ -571,8 +564,8 @@ mod tests {
         storage.write(&key, encode(&value)).expect("write failed");
 
         storage.block.pred_epochs.new_epoch(new_epoch_start);
-        let batch = PersistentStorage::batch();
-        storage.commit_block(batch).expect("commit failed");
+
+        storage.commit_block().expect("commit failed");
 
         let new_epoch_start = BlockHeight(6);
         storage
@@ -588,8 +581,8 @@ mod tests {
 
         storage.block.epoch = storage.block.epoch.next();
         storage.block.pred_epochs.new_epoch(new_epoch_start);
-        let batch = PersistentStorage::batch();
-        storage.commit_block(batch).expect("commit failed");
+
+        storage.commit_block().expect("commit failed");
 
         let result = storage.get_merkle_tree(1.into(), Some(StoreType::Ibc));
         assert!(result.is_ok(), "The tree at Height 1 should be restored");
@@ -607,8 +600,8 @@ mod tests {
 
         storage.block.epoch = storage.block.epoch.next();
         storage.block.pred_epochs.new_epoch(new_epoch_start);
-        let batch = PersistentStorage::batch();
-        storage.commit_block(batch).expect("commit failed");
+
+        storage.commit_block().expect("commit failed");
 
         let result = storage.get_merkle_tree(1.into(), Some(StoreType::Ibc));
         assert!(result.is_err(), "The tree at Height 1 should be pruned");
@@ -634,8 +627,8 @@ mod tests {
         storage.write(&signed_root_key, bytes).unwrap();
         storage.block.epoch = storage.block.epoch.next();
         storage.block.pred_epochs.new_epoch(BlockHeight(12));
-        let batch = PersistentStorage::batch();
-        storage.commit_block(batch).expect("commit failed");
+
+        storage.commit_block().expect("commit failed");
 
         // ibc tree should be able to be restored
         let result = storage.get_merkle_tree(6.into(), Some(StoreType::Ibc));
@@ -651,7 +644,7 @@ mod tests {
     fn test_persistent_storage_prefix_iter() {
         let db_path =
             TempDir::new().expect("Unable to create a temporary DB directory");
-        let storage = PersistentStorage::open(
+        let state = PersistentState::open(
             db_path.path(),
             ChainId::default(),
             address::testing::nam(),
@@ -659,10 +652,6 @@ mod tests {
             None,
             is_merklized_storage_key,
         );
-        let mut storage = WlStorage {
-            storage,
-            write_log: Default::default(),
-        };
 
         let prefix = storage::Key::parse("prefix").unwrap();
         let mismatched_prefix = storage::Key::parse("different").unwrap();
@@ -671,14 +660,14 @@ mod tests {
 
         for i in sub_keys.iter() {
             let key = prefix.push(i).unwrap();
-            storage.write(&key, i).unwrap();
+            state.write(&key, i).unwrap();
 
             let key = mismatched_prefix.push(i).unwrap();
-            storage.write(&key, i / 2).unwrap();
+            state.write(&key, i / 2).unwrap();
         }
 
         // Then try to iterate over their prefix
-        let iter = state::iter_prefix(&storage, &prefix)
+        let iter = state::iter_prefix(&state, &prefix)
             .unwrap()
             .map(Result::unwrap);
 
@@ -690,10 +679,10 @@ mod tests {
         itertools::assert_equal(iter, expected.clone());
 
         // Commit genesis state
-        storage.commit_block().unwrap();
+        state.commit_block().unwrap();
 
         // Again, try to iterate over their prefix
-        let iter = state::iter_prefix(&storage, &prefix)
+        let iter = state::iter_prefix(&state, &prefix)
             .unwrap()
             .map(Result::unwrap);
         itertools::assert_equal(iter, expected);
@@ -705,13 +694,13 @@ mod tests {
         );
         for i in more_sub_keys.iter() {
             let key = prefix.push(i).unwrap();
-            storage.write(&key, i).unwrap();
+            state.write(&key, i).unwrap();
 
             let key = mismatched_prefix.push(i).unwrap();
-            storage.write(&key, i / 2).unwrap();
+            state.write(&key, i / 2).unwrap();
         }
 
-        let iter = state::iter_prefix(&storage, &prefix)
+        let iter = state::iter_prefix(&state, &prefix)
             .unwrap()
             .map(Result::unwrap);
 
@@ -727,11 +716,11 @@ mod tests {
         let delete_keys = [2, 0, -10, 123];
         for i in delete_keys.iter() {
             let key = prefix.push(i).unwrap();
-            storage.delete(&key).unwrap()
+            state.delete(&key).unwrap()
         }
 
         // Check that iter_prefix doesn't return deleted keys anymore
-        let iter = state::iter_prefix(&storage, &prefix)
+        let iter = state::iter_prefix(&state, &prefix)
             .unwrap()
             .map(Result::unwrap);
         let expected = merged
@@ -741,10 +730,10 @@ mod tests {
         itertools::assert_equal(iter, expected.clone());
 
         // Commit genesis state
-        storage.commit_block().unwrap();
+        state.commit_block().unwrap();
 
         // And check again
-        let iter = state::iter_prefix(&storage, &prefix)
+        let iter = state::iter_prefix(&state, &prefix)
             .unwrap()
             .map(Result::unwrap);
         itertools::assert_equal(iter, expected);
@@ -766,7 +755,7 @@ mod tests {
     fn test_persistent_storage_writing_without_merklizing_or_diffs() {
         let db_path =
             TempDir::new().expect("Unable to create a temporary DB directory");
-        let storage = PersistentStorage::open(
+        let state = PersistentState::open(
             db_path.path(),
             ChainId::default(),
             address::testing::nam(),
@@ -774,13 +763,9 @@ mod tests {
             None,
             merkle_tree_key_filter,
         );
-        let mut wls = WlStorage {
-            storage,
-            write_log: Default::default(),
-        };
         // Start the first block
         let first_height = BlockHeight::first();
-        wls.storage.block.height = first_height;
+        state.in_mem_mut().block.height = first_height;
 
         let key1 = test_key_1();
         let val1 = 1u64;
@@ -788,61 +773,60 @@ mod tests {
         let val2 = 2u64;
 
         // Standard write of key-val-1
-        wls.write(&key1, val1).unwrap();
+        state.write(&key1, val1).unwrap();
 
-        // Read from WlStorage should return val1
-        let res = wls.read::<u64>(&key1).unwrap().unwrap();
+        // Read from TestState should return val1
+        let res = state.read::<u64>(&key1).unwrap().unwrap();
         assert_eq!(res, val1);
 
         // Read from Storage shouldn't return val1 because the block hasn't been
         // committed
-        let (res, _) = wls.storage.read(&key1).unwrap();
+        let (res, _) = state.db_read(&key1).unwrap();
         assert!(res.is_none());
 
         // Write key-val-2 without merklizing or diffs
-        wls.write(&key2, val2).unwrap();
+        state.write(&key2, val2).unwrap();
 
-        // Read from WlStorage should return val2
-        let res = wls.read::<u64>(&key2).unwrap().unwrap();
+        // Read from TestState should return val2
+        let res = state.read::<u64>(&key2).unwrap().unwrap();
         assert_eq!(res, val2);
 
         // Commit block and storage changes
-        wls.commit_block().unwrap();
-        wls.storage.block.height = wls.storage.block.height.next_height();
-        let second_height = wls.storage.block.height;
+        state.commit_block().unwrap();
+        state.in_mem_mut().block.height =
+            state.in_mem_mut().block.height.next_height();
+        let second_height = state.in_mem().block.height;
 
         // Read key1 from Storage should return val1
-        let (res1, _) = wls.storage.read(&key1).unwrap();
+        let (res1, _) = state.db_read(&key1).unwrap();
         let res1 = u64::try_from_slice(&res1.unwrap()).unwrap();
         assert_eq!(res1, val1);
 
         // Check merkle tree inclusion of key-val-1 explicitly
-        let is_merklized1 = wls.storage.block.tree.has_key(&key1).unwrap();
+        let is_merklized1 = state.in_mem().block.tree.has_key(&key1).unwrap();
         assert!(is_merklized1);
 
         // Key2 should be in storage. Confirm by reading from
-        // WlStorage and also by reading Storage subspace directly
-        let res2 = wls.read::<u64>(&key2).unwrap().unwrap();
+        // TestState and also by reading Storage subspace directly
+        let res2 = state.read::<u64>(&key2).unwrap().unwrap();
         assert_eq!(res2, val2);
-        let res2 = wls.storage.db.read_subspace_val(&key2).unwrap().unwrap();
+        let res2 = state.db().read_subspace_val(&key2).unwrap().unwrap();
         let res2 = u64::try_from_slice(&res2).unwrap();
         assert_eq!(res2, val2);
 
         // Check explicitly that key-val-2 is not in merkle tree
-        let is_merklized2 = wls.storage.block.tree.has_key(&key2).unwrap();
+        let is_merklized2 = state.in_mem().block.tree.has_key(&key2).unwrap();
         assert!(!is_merklized2);
 
         // Check that the proper diffs exist for key-val-1
-        let res1 = wls
-            .storage
-            .db
+        let res1 = state
+            .db()
             .read_diffs_val(&key1, first_height, true)
             .unwrap();
         assert!(res1.is_none());
 
-        let res1 = wls
-            .storage
-            .db
+        let res1 = state
+            .db()
             .read_diffs_val(&key1, first_height, false)
             .unwrap()
             .unwrap();
@@ -851,15 +835,13 @@ mod tests {
 
         // Check that there are diffs for key-val-2 in block 0, since all keys
         // need to have diffs for at least 1 block for rollback purposes
-        let res2 = wls
-            .storage
-            .db
+        let res2 = state
+            .db()
             .read_diffs_val(&key2, first_height, true)
             .unwrap();
         assert!(res2.is_none());
-        let res2 = wls
-            .storage
-            .db
+        let res2 = state
+            .db()
             .read_diffs_val(&key2, first_height, false)
             .unwrap()
             .unwrap();
@@ -867,84 +849,77 @@ mod tests {
         assert_eq!(res2, val2);
 
         // Delete the data then commit the block
-        wls.delete(&key1).unwrap();
-        wls.delete(&key2).unwrap();
-        wls.commit_block().unwrap();
-        wls.storage.block.height = wls.storage.block.height.next_height();
+        state.delete(&key1).unwrap();
+        state.delete(&key2).unwrap();
+        state.commit_block().unwrap();
+        state.in_mem_mut().block.height =
+            state.in_mem().block.height.next_height();
 
         // Check the key-vals are removed from the storage subspace
-        let res1 = wls.read::<u64>(&key1).unwrap();
-        let res2 = wls.read::<u64>(&key2).unwrap();
+        let res1 = state.read::<u64>(&key1).unwrap();
+        let res2 = state.read::<u64>(&key2).unwrap();
         assert!(res1.is_none() && res2.is_none());
-        let res1 = wls.storage.db.read_subspace_val(&key1).unwrap();
-        let res2 = wls.storage.db.read_subspace_val(&key2).unwrap();
+        let res1 = state.db().read_subspace_val(&key1).unwrap();
+        let res2 = state.db().read_subspace_val(&key2).unwrap();
         assert!(res1.is_none() && res2.is_none());
 
         // Check that the key-vals don't exist in the merkle tree anymore
-        let is_merklized1 = wls.storage.block.tree.has_key(&key1).unwrap();
-        let is_merklized2 = wls.storage.block.tree.has_key(&key2).unwrap();
+        let is_merklized1 = state.in_mem().block.tree.has_key(&key1).unwrap();
+        let is_merklized2 = state.in_mem().block.tree.has_key(&key2).unwrap();
         assert!(!is_merklized1 && !is_merklized2);
 
         // Check that key-val-1 diffs are properly updated for blocks 0 and 1
-        let res1 = wls
-            .storage
-            .db
+        let res1 = state
+            .db()
             .read_diffs_val(&key1, first_height, true)
             .unwrap();
         assert!(res1.is_none());
 
-        let res1 = wls
-            .storage
-            .db
+        let res1 = state
+            .db()
             .read_diffs_val(&key1, first_height, false)
             .unwrap()
             .unwrap();
         let res1 = u64::try_from_slice(&res1).unwrap();
         assert_eq!(res1, val1);
 
-        let res1 = wls
-            .storage
-            .db
+        let res1 = state
+            .db()
             .read_diffs_val(&key1, second_height, true)
             .unwrap()
             .unwrap();
         let res1 = u64::try_from_slice(&res1).unwrap();
         assert_eq!(res1, val1);
 
-        let res1 = wls
-            .storage
-            .db
+        let res1 = state
+            .db()
             .read_diffs_val(&key1, second_height, false)
             .unwrap();
         assert!(res1.is_none());
 
         // Check that key-val-2 diffs don't exist for block 0 anymore
-        let res2 = wls
-            .storage
-            .db
+        let res2 = state
+            .db()
             .read_diffs_val(&key2, first_height, true)
             .unwrap();
         assert!(res2.is_none());
-        let res2 = wls
-            .storage
-            .db
+        let res2 = state
+            .db()
             .read_diffs_val(&key2, first_height, false)
             .unwrap();
         assert!(res2.is_none());
 
         // Check that the block 1 diffs for key-val-2 include an "old" value of
         // val2 and no "new" value
-        let res2 = wls
-            .storage
-            .db
+        let res2 = state
+            .db()
             .read_diffs_val(&key2, second_height, true)
             .unwrap()
             .unwrap();
         let res2 = u64::try_from_slice(&res2).unwrap();
         assert_eq!(res2, val2);
-        let res2 = wls
-            .storage
-            .db
+        let res2 = state
+            .db()
             .read_diffs_val(&key2, second_height, false)
             .unwrap();
         assert!(res2.is_none());

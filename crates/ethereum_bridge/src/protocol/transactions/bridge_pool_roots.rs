@@ -7,7 +7,7 @@ use namada_core::key::{common, SignableEthMessage};
 use namada_core::storage::BlockHeight;
 use namada_core::token::Amount;
 use namada_proof_of_stake::pos_queries::PosQueries;
-use namada_state::{DBIter, StorageHasher, WlStorage, DB};
+use namada_state::{DBIter, StorageHasher, WlState, DB};
 use namada_storage::{StorageRead, StorageWrite};
 use namada_tx::data::TxResult;
 use namada_tx::Signed;
@@ -25,7 +25,7 @@ use crate::storage::vote_tallies::{self, BridgePoolRoot};
 /// Sign the latest Bridge pool root, and return the associated
 /// vote extension protocol transaction.
 pub fn sign_bridge_pool_root<D, H>(
-    wl_storage: &WlStorage<D, H>,
+    state: &WlState<D, H>,
     validator_addr: &Address,
     eth_hot_key: &common::SecretKey,
     protocol_key: &common::SecretKey,
@@ -34,18 +34,15 @@ where
     D: 'static + DB + for<'iter> DBIter<'iter> + Sync,
     H: 'static + StorageHasher + Sync,
 {
-    if !wl_storage.ethbridge_queries().is_bridge_active() {
+    if !state.ethbridge_queries().is_bridge_active() {
         return None;
     }
-    let bp_root = wl_storage.ethbridge_queries().get_bridge_pool_root().0;
-    let nonce = wl_storage
-        .ethbridge_queries()
-        .get_bridge_pool_nonce()
-        .to_bytes();
+    let bp_root = state.ethbridge_queries().get_bridge_pool_root().0;
+    let nonce = state.ethbridge_queries().get_bridge_pool_nonce().to_bytes();
     let to_sign = keccak_hash([bp_root.as_slice(), nonce.as_slice()].concat());
     let signed = Signed::<_, SignableEthMessage>::new(eth_hot_key, to_sign);
     let ext = bridge_pool_roots::Vext {
-        block_height: wl_storage.storage.get_last_block_height(),
+        block_height: state.in_mem().get_last_block_height(),
         validator_addr: validator_addr.clone(),
         sig: signed.sig,
     };
@@ -61,7 +58,7 @@ where
 /// validators, the signature is made available for bridge
 /// pool proofs.
 pub fn apply_derived_tx<D, H>(
-    wl_storage: &mut WlStorage<D, H>,
+    state: &mut WlState<D, H>,
     vext: MultiSignedVext,
 ) -> Result<TxResult>
 where
@@ -76,14 +73,14 @@ where
         "Applying state updates derived from signatures of the Ethereum \
          bridge pool root and nonce."
     );
-    let voting_powers = utils::get_voting_powers(wl_storage, &vext)?;
+    let voting_powers = utils::get_voting_powers(state, &vext)?;
     let root_height = vext.iter().next().unwrap().data.block_height;
-    let (partial_proof, seen_by) = parse_vexts(wl_storage, vext);
+    let (partial_proof, seen_by) = parse_vexts(state, vext);
 
     // return immediately if a complete proof has already been acquired
     let bp_key = vote_tallies::Keys::from((&partial_proof, root_height));
     let seen =
-        votes::storage::maybe_read_seen(wl_storage, &bp_key)?.unwrap_or(false);
+        votes::storage::maybe_read_seen(state, &bp_key)?.unwrap_or(false);
     if seen {
         tracing::debug!(
             ?root_height,
@@ -94,19 +91,14 @@ where
     }
 
     // apply updates to the bridge pool root.
-    let (mut changed, confirmed_update) = apply_update(
-        wl_storage,
-        bp_key,
-        partial_proof,
-        seen_by,
-        &voting_powers,
-    )?;
+    let (mut changed, confirmed_update) =
+        apply_update(state, bp_key, partial_proof, seen_by, &voting_powers)?;
 
     // if the root is confirmed, update storage and add
     // relevant key to changed.
     if let Some(proof) = confirmed_update {
         let signed_root_key = get_signed_root_key();
-        let should_write_root = wl_storage
+        let should_write_root = state
             .read::<(BridgePoolRoot, BlockHeight)>(&signed_root_key)
             .expect(
                 "Reading a signed Bridge pool root from storage should not \
@@ -127,12 +119,9 @@ where
                 ?root_height,
                 "New Bridge pool root proof acquired"
             );
-            wl_storage
-                .write(&signed_root_key, (proof, root_height))
-                .expect(
-                    "Writing a signed Bridge pool root to storage should not \
-                     fail.",
-                );
+            state.write(&signed_root_key, (proof, root_height)).expect(
+                "Writing a signed Bridge pool root to storage should not fail.",
+            );
             changed.insert(get_signed_root_key());
         } else {
             tracing::debug!(
@@ -161,7 +150,7 @@ impl GetVoters for &MultiSignedVext {
 /// Convert a set of signatures over bridge pool roots and nonces (at a certain
 /// height) into a partial proof and a new set of votes.
 fn parse_vexts<D, H>(
-    wl_storage: &WlStorage<D, H>,
+    state: &WlState<D, H>,
     multisigned: MultiSignedVext,
 ) -> (BridgePoolRoot, Votes)
 where
@@ -169,19 +158,19 @@ where
     H: 'static + StorageHasher + Sync,
 {
     let height = multisigned.iter().next().unwrap().data.block_height;
-    let epoch = wl_storage.pos_queries().get_epoch(height);
-    let root = wl_storage
+    let epoch = state.pos_queries().get_epoch(height);
+    let root = state
         .ethbridge_queries()
         .get_bridge_pool_root_at_height(height)
         .expect("A BP root should be available at the given height");
-    let nonce = wl_storage
+    let nonce = state
         .ethbridge_queries()
         .get_bridge_pool_nonce_at_height(height);
     let mut partial_proof = BridgePoolRootProof::new((root, nonce));
     partial_proof.attach_signature_batch(multisigned.clone().into_iter().map(
         |SignedVext(signed)| {
             (
-                wl_storage
+                state
                     .ethbridge_queries()
                     .get_eth_addr_book(&signed.data.validator_addr, epoch)
                     .unwrap(),
@@ -206,7 +195,7 @@ where
 ///
 /// In all instances, the changed storage keys are returned.
 fn apply_update<D, H>(
-    wl_storage: &mut WlStorage<D, H>,
+    state: &mut WlState<D, H>,
     bp_key: vote_tallies::Keys<BridgePoolRoot>,
     mut update: BridgePoolRoot,
     seen_by: Votes,
@@ -216,7 +205,7 @@ where
     D: 'static + DB + for<'iter> DBIter<'iter> + Sync,
     H: 'static + StorageHasher + Sync,
 {
-    let partial_proof = votes::storage::read_body(wl_storage, &bp_key);
+    let partial_proof = votes::storage::read_body(state, &bp_key);
     let (vote_tracking, changed, confirmed, already_present) = if let Ok(
         partial,
     ) =
@@ -229,7 +218,7 @@ where
         update.0.attach_signature_batch(partial.0.signatures);
         let new_votes = NewVotes::new(seen_by, voting_powers)?;
         let (vote_tracking, changed) =
-            votes::update::calculate(wl_storage, &bp_key, new_votes)?;
+            votes::update::calculate(state, &bp_key, new_votes)?;
         if changed.is_empty() {
             return Ok((changed, None));
         }
@@ -237,14 +226,14 @@ where
         (vote_tracking, changed, confirmed, true)
     } else {
         tracing::debug!(%bp_key.prefix, "No validator has signed this bridge pool update before.");
-        let vote_tracking = calculate_new(wl_storage, seen_by, voting_powers)?;
+        let vote_tracking = calculate_new(state, seen_by, voting_powers)?;
         let changed = bp_key.into_iter().collect();
         let confirmed = vote_tracking.seen;
         (vote_tracking, changed, confirmed, false)
     };
 
     votes::storage::write(
-        wl_storage,
+        state,
         &bp_key,
         &update,
         &vote_tracking,
@@ -266,7 +255,7 @@ mod test_apply_bp_roots_to_storage {
     use namada_core::voting_power::FractionalVotingPower;
     use namada_proof_of_stake::parameters::OwnedPosParams;
     use namada_proof_of_stake::storage::write_pos_params;
-    use namada_state::testing::TestWlStorage;
+    use namada_state::testing::TestState;
     use namada_storage::StorageRead;
     use namada_vote_ext::bridge_pool_roots;
 
@@ -285,7 +274,7 @@ mod test_apply_bp_roots_to_storage {
         /// The validator keys.
         keys: HashMap<Address, test_utils::TestValidatorKeys>,
         /// Storage.
-        wl_storage: TestWlStorage,
+        wl_storage: TestState,
     }
 
     /// Setup storage for tests.
@@ -305,7 +294,7 @@ mod test_apply_bp_roots_to_storage {
             ]),
         );
         // First commit
-        wl_storage.storage.block.height = 1.into();
+        wl_storage.in_mem_mut().block.height = 1.into();
         wl_storage.commit_block().unwrap();
 
         vp::bridge_pool::init_storage(&mut wl_storage);

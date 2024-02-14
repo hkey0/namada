@@ -168,7 +168,7 @@ mod tests {
         tx_host_env::with(|env| {
             for i in sub_keys.iter() {
                 let key = prefix.push(i).unwrap();
-                env.wl_storage.write(&key, i).unwrap();
+                env.state.write(&key, i).unwrap();
             }
         });
 
@@ -227,7 +227,7 @@ mod tests {
         tx_host_env::with(|env| {
             // store wasm code
             let key = Key::wasm_code(&code_hash);
-            env.wl_storage.storage.write(&key, code.clone()).unwrap();
+            env.state.storage.write(&key, code.clone()).unwrap();
         });
         tx::ctx().init_account(code_hash, &None).unwrap();
     }
@@ -339,35 +339,23 @@ mod tests {
 
         assert_eq!(
             tx::ctx().get_chain_id().unwrap(),
-            tx_host_env::with(|env| env.wl_storage.storage.get_chain_id().0)
+            tx_host_env::with(|env| env.state.storage.get_chain_id().0)
         );
         assert_eq!(
             tx::ctx().get_block_height().unwrap(),
-            tx_host_env::with(|env| env
-                .wl_storage
-                .storage
-                .get_block_height()
-                .0)
+            tx_host_env::with(|env| env.state.storage.get_block_height().0)
         );
         assert_eq!(
             tx::ctx().get_block_hash().unwrap(),
-            tx_host_env::with(|env| env.wl_storage.storage.get_block_hash().0)
+            tx_host_env::with(|env| env.state.storage.get_block_hash().0)
         );
         assert_eq!(
             tx::ctx().get_block_epoch().unwrap(),
-            tx_host_env::with(|env| env
-                .wl_storage
-                .storage
-                .get_current_epoch()
-                .0)
+            tx_host_env::with(|env| env.state.storage.get_current_epoch().0)
         );
         assert_eq!(
             tx::ctx().get_native_token().unwrap(),
-            tx_host_env::with(|env| env
-                .wl_storage
-                .storage
-                .native_token
-                .clone())
+            tx_host_env::with(|env| env.state.storage.native_token.clone())
         );
     }
 
@@ -377,7 +365,7 @@ mod tests {
         tx_host_env::init();
 
         let pred_epochs = tx::ctx().get_pred_epochs().unwrap();
-        let expected = tx_host_env::take().wl_storage.storage.block.pred_epochs;
+        let expected = tx_host_env::take().state.storage.block.pred_epochs;
         assert_eq!(expected, pred_epochs);
     }
 
@@ -409,12 +397,9 @@ mod tests {
         let existing_key =
             addr_key.join(&Key::parse("existing_key_raw").unwrap());
         let existing_value = vec![2_u8; 1000];
-        tx_env
-            .wl_storage
-            .write(&existing_key, &existing_value)
-            .unwrap();
+        tx_env.state.write(&existing_key, &existing_value).unwrap();
         // ... and commit it
-        tx_env.wl_storage.commit_tx();
+        tx_env.state.commit_tx();
 
         // In a transaction, write override the existing key's value and add
         // another key-value
@@ -497,10 +482,10 @@ mod tests {
         // Write some values to storage ...
         for i in sub_keys.iter() {
             let key = prefix.push(i).unwrap();
-            tx_env.wl_storage.write(&key, i).unwrap();
+            tx_env.state.write(&key, i).unwrap();
         }
         // ... and commit them
-        tx_env.wl_storage.commit_tx();
+        tx_env.state.commit_tx();
 
         // In a transaction, write override the existing key's value and add
         // another key-value
@@ -554,7 +539,7 @@ mod tests {
         let keypair = key::testing::keypair_1();
         let pk = keypair.ref_to();
 
-        let _ = pks_handle(&addr).insert(&mut env.wl_storage, 0_u8, pk.clone());
+        let _ = pks_handle(&addr).insert(&mut env.state, 0_u8, pk.clone());
 
         // Initialize the environment
         vp_host_env::set(env);
@@ -571,7 +556,7 @@ mod tests {
             let keypairs = vec![keypair.clone()];
             let pks_map = AccountPublicKeysMap::from_iter(vec![pk.clone()]);
             let signed_tx_data = vp_host_env::with(|env| {
-                let chain_id = env.wl_storage.storage.chain_id.clone();
+                let chain_id = env.state.storage.chain_id.clone();
                 let mut tx = Tx::new(chain_id, expiration);
                 tx.add_code(code.clone(), None)
                     .add_serialized_data(data.to_vec())
@@ -619,35 +604,23 @@ mod tests {
 
         assert_eq!(
             vp::CTX.get_chain_id().unwrap(),
-            vp_host_env::with(|env| env.wl_storage.storage.get_chain_id().0)
+            vp_host_env::with(|env| env.state.storage.get_chain_id().0)
         );
         assert_eq!(
             vp::CTX.get_block_height().unwrap(),
-            vp_host_env::with(|env| env
-                .wl_storage
-                .storage
-                .get_block_height()
-                .0)
+            vp_host_env::with(|env| env.state.storage.get_block_height().0)
         );
         assert_eq!(
             vp::CTX.get_block_hash().unwrap(),
-            vp_host_env::with(|env| env.wl_storage.storage.get_block_hash().0)
+            vp_host_env::with(|env| env.state.storage.get_block_hash().0)
         );
         assert_eq!(
             vp::CTX.get_block_epoch().unwrap(),
-            vp_host_env::with(|env| env
-                .wl_storage
-                .storage
-                .get_current_epoch()
-                .0)
+            vp_host_env::with(|env| env.state.storage.get_current_epoch().0)
         );
         assert_eq!(
             vp::CTX.get_native_token().unwrap(),
-            vp_host_env::with(|env| env
-                .wl_storage
-                .storage
-                .native_token
-                .clone())
+            vp_host_env::with(|env| env.state.storage.native_token.clone())
         );
     }
 
@@ -681,11 +654,8 @@ mod tests {
             // store wasm codes
             let key = Key::wasm_code(&code_hash);
             let len_key = Key::wasm_code_len(&code_hash);
-            env.wl_storage.storage.write(&key, code.clone()).unwrap();
-            env.wl_storage
-                .storage
-                .write(&len_key, code_len.clone())
-                .unwrap();
+            env.state.storage.write(&key, code.clone()).unwrap();
+            env.state.storage.write(&len_key, code_len.clone()).unwrap();
         });
         let mut tx = Tx::new(ChainId::default(), None);
         tx.add_code_from_hash(code_hash, None)
@@ -704,11 +674,8 @@ mod tests {
             // store wasm codes
             let key = Key::wasm_code(&code_hash);
             let len_key = Key::wasm_code_len(&code_hash);
-            env.wl_storage.storage.write(&key, code.clone()).unwrap();
-            env.wl_storage
-                .storage
-                .write(&len_key, code_len.clone())
-                .unwrap();
+            env.state.storage.write(&key, code.clone()).unwrap();
+            env.state.storage.write(&len_key, code_len.clone()).unwrap();
         });
         let mut tx = Tx::new(ChainId::default(), None);
         tx.add_code_from_hash(code_hash, None)
@@ -754,14 +721,11 @@ mod tests {
         // Commit
         env.commit_tx_and_block();
         // update the block height for the following client update
-        env.wl_storage
+        env.state
             .storage
             .begin_block(BlockHash::default(), BlockHeight(2))
             .unwrap();
-        env.wl_storage
-            .storage
-            .set_header(tm_dummy_header())
-            .unwrap();
+        env.state.storage.set_header(tm_dummy_header()).unwrap();
 
         // Start a transaction to update the client
         tx_host_env::set(env);
@@ -801,10 +765,7 @@ mod tests {
         let (client_id, client_state, writes) = ibc::prepare_client();
         writes.into_iter().for_each(|(key, val)| {
             tx_host_env::with(|env| {
-                env.wl_storage
-                    .storage
-                    .write(&key, &val)
-                    .expect("write error");
+                env.state.storage.write(&key, &val).expect("write error");
             });
         });
 
@@ -830,14 +791,11 @@ mod tests {
         // Commit
         env.commit_tx_and_block();
         // for the next block
-        env.wl_storage
+        env.state
             .storage
             .begin_block(BlockHash::default(), BlockHeight(2))
             .unwrap();
-        env.wl_storage
-            .storage
-            .set_header(tm_dummy_header())
-            .unwrap();
+        env.state.storage.set_header(tm_dummy_header()).unwrap();
         tx_host_env::set(env);
 
         // Start the next transaction for ConnectionOpenAck
@@ -878,10 +836,7 @@ mod tests {
         let (client_id, client_state, writes) = ibc::prepare_client();
         writes.into_iter().for_each(|(key, val)| {
             tx_host_env::with(|env| {
-                env.wl_storage
-                    .storage
-                    .write(&key, &val)
-                    .expect("write error");
+                env.state.storage.write(&key, &val).expect("write error");
             })
         });
 
@@ -907,14 +862,11 @@ mod tests {
         // Commit
         env.commit_tx_and_block();
         // for the next block
-        env.wl_storage
+        env.state
             .storage
             .begin_block(BlockHash::default(), BlockHeight(2))
             .unwrap();
-        env.wl_storage
-            .storage
-            .set_header(tm_dummy_header())
-            .unwrap();
+        env.state.storage.set_header(tm_dummy_header()).unwrap();
         tx_host_env::set(env);
 
         // Start the next transaction for ConnectionOpenConfirm
@@ -956,10 +908,7 @@ mod tests {
         writes.extend(conn_writes);
         writes.into_iter().for_each(|(key, val)| {
             tx_host_env::with(|env| {
-                env.wl_storage
-                    .storage
-                    .write(&key, &val)
-                    .expect("write error");
+                env.state.storage.write(&key, &val).expect("write error");
             });
         });
 
@@ -986,14 +935,11 @@ mod tests {
         // Commit
         env.commit_tx_and_block();
         // for the next block
-        env.wl_storage
+        env.state
             .storage
             .begin_block(BlockHash::default(), BlockHeight(2))
             .unwrap();
-        env.wl_storage
-            .storage
-            .set_header(tm_dummy_header())
-            .unwrap();
+        env.state.storage.set_header(tm_dummy_header()).unwrap();
         tx_host_env::set(env);
 
         // Start the next transaction for ChannelOpenAck
@@ -1029,10 +975,7 @@ mod tests {
         writes.extend(conn_writes);
         writes.into_iter().for_each(|(key, val)| {
             tx_host_env::with(|env| {
-                env.wl_storage
-                    .storage
-                    .write(&key, &val)
-                    .expect("write error");
+                env.state.storage.write(&key, &val).expect("write error");
             });
         });
 
@@ -1065,14 +1008,11 @@ mod tests {
         // Commit
         env.commit_tx_and_block();
         // for the next block
-        env.wl_storage
+        env.state
             .storage
             .begin_block(BlockHash::default(), BlockHeight(2))
             .unwrap();
-        env.wl_storage
-            .storage
-            .set_header(tm_dummy_header())
-            .unwrap();
+        env.state.storage.set_header(tm_dummy_header()).unwrap();
         tx_host_env::set(env);
 
         // Start the next transaction for ChannelOpenConfirm
@@ -1112,10 +1052,7 @@ mod tests {
         writes.extend(channel_writes);
         writes.into_iter().for_each(|(key, val)| {
             tx_host_env::with(|env| {
-                env.wl_storage
-                    .storage
-                    .write(&key, &val)
-                    .expect("write error");
+                env.state.storage.write(&key, &val).expect("write error");
             });
         });
 
@@ -1169,10 +1106,7 @@ mod tests {
         writes.extend(channel_writes);
         writes.into_iter().for_each(|(key, val)| {
             tx_host_env::with(|env| {
-                env.wl_storage
-                    .storage
-                    .write(&key, &val)
-                    .expect("write error");
+                env.state.storage.write(&key, &val).expect("write error");
             });
         });
 
@@ -1219,10 +1153,7 @@ mod tests {
         writes.extend(channel_writes);
         writes.into_iter().for_each(|(key, val)| {
             tx_host_env::with(|env| {
-                env.wl_storage
-                    .storage
-                    .write(&key, &val)
-                    .expect("write error");
+                env.state.storage.write(&key, &val).expect("write error");
             });
         });
 
@@ -1267,14 +1198,11 @@ mod tests {
         // Commit
         env.commit_tx_and_block();
         // for the next block
-        env.wl_storage
+        env.state
             .storage
             .begin_block(BlockHash::default(), BlockHeight(2))
             .unwrap();
-        env.wl_storage
-            .storage
-            .set_header(tm_dummy_header())
-            .unwrap();
+        env.state.storage.set_header(tm_dummy_header()).unwrap();
         tx_host_env::set(env);
 
         // Start the next transaction for receiving an ack
@@ -1306,7 +1234,7 @@ mod tests {
         tx_host_env::set(env);
         let balance_key = token::storage_key::balance_key(&token, &sender);
         let balance: Option<Amount> = tx_host_env::with(|env| {
-            env.wl_storage.read(&balance_key).expect("read error")
+            env.state.read(&balance_key).expect("read error")
         });
         assert_eq!(
             balance,
@@ -1317,7 +1245,7 @@ mod tests {
             &address::Address::Internal(address::InternalAddress::Ibc),
         );
         let escrow: Option<Amount> = tx_host_env::with(|env| {
-            env.wl_storage.read(&escrow_key).expect("read error")
+            env.state.read(&escrow_key).expect("read error")
         });
         assert_eq!(
             escrow,
@@ -1359,10 +1287,7 @@ mod tests {
         );
         writes.into_iter().for_each(|(key, val)| {
             tx_host_env::with(|env| {
-                env.wl_storage
-                    .storage
-                    .write(&key, &val)
-                    .expect("write error");
+                env.state.storage.write(&key, &val).expect("write error");
             });
         });
 
@@ -1393,11 +1318,11 @@ mod tests {
         // Check the balance
         tx_host_env::set(env);
         let balance: Option<Amount> = tx_host_env::with(|env| {
-            env.wl_storage.read(&balance_key).expect("read error")
+            env.state.read(&balance_key).expect("read error")
         });
         assert_eq!(balance, Some(Amount::from_u64(0)));
         let minted: Option<Amount> = tx_host_env::with(|env| {
-            env.wl_storage.read(&minted_key).expect("read error")
+            env.state.read(&minted_key).expect("read error")
         });
         assert_eq!(minted, Some(Amount::from_u64(0)));
     }
@@ -1424,10 +1349,7 @@ mod tests {
 
         writes.into_iter().for_each(|(key, val)| {
             tx_host_env::with(|env| {
-                env.wl_storage
-                    .storage
-                    .write(&key, &val)
-                    .expect("write error");
+                env.state.storage.write(&key, &val).expect("write error");
             });
         });
 
@@ -1469,12 +1391,11 @@ mod tests {
         // Check the balance
         tx_host_env::set(env);
         let key = ibc::balance_key_with_ibc_prefix(denom, &receiver);
-        let balance: Option<Amount> = tx_host_env::with(|env| {
-            env.wl_storage.read(&key).expect("read error")
-        });
+        let balance: Option<Amount> =
+            tx_host_env::with(|env| env.state.read(&key).expect("read error"));
         assert_eq!(balance, Some(Amount::from_u64(100)));
         let minted: Option<Amount> = tx_host_env::with(|env| {
-            env.wl_storage.read(&minted_key).expect("read error")
+            env.state.read(&minted_key).expect("read error")
         });
         assert_eq!(minted, Some(Amount::from_u64(100)));
     }
@@ -1501,10 +1422,7 @@ mod tests {
 
         writes.into_iter().for_each(|(key, val)| {
             tx_host_env::with(|env| {
-                env.wl_storage
-                    .storage
-                    .write(&key, &val)
-                    .expect("write error");
+                env.state.storage.write(&key, &val).expect("write error");
             });
         });
 
@@ -1542,10 +1460,7 @@ mod tests {
         tx_host_env::set(env);
         let ack_key = ibc_storage::ack_key(&port_id, &channel_id, sequence);
         let ack = tx_host_env::with(|env| {
-            env.wl_storage
-                .read_bytes(&ack_key)
-                .expect("read error")
-                .unwrap()
+            env.state.read_bytes(&ack_key).expect("read error").unwrap()
         });
         let expected_ack =
             Hash::sha256(Vec::<u8>::from(ibc::transfer_ack_with_error()))
@@ -1555,7 +1470,7 @@ mod tests {
         let receipt_key =
             ibc_storage::receipt_key(&port_id, &channel_id, sequence);
         let changed_keys = tx_host_env::with(|env| {
-            env.wl_storage
+            env.state
                 .write_log
                 .verifiers_and_changed_keys(&BTreeSet::new())
                 .1
@@ -1585,10 +1500,7 @@ mod tests {
         writes.extend(channel_writes);
         writes.into_iter().for_each(|(key, val)| {
             tx_host_env::with(|env| {
-                env.wl_storage
-                    .storage
-                    .write(&key, &val)
-                    .expect("write error");
+                env.state.storage.write(&key, &val).expect("write error");
             });
         });
         // escrow in advance
@@ -1600,7 +1512,7 @@ mod tests {
             .unwrap()
             .serialize_to_vec();
         tx_host_env::with(|env| {
-            env.wl_storage
+            env.state
                 .storage
                 .write(&escrow_key, &val)
                 .expect("write error");
@@ -1648,15 +1560,14 @@ mod tests {
         // Check the balance
         tx_host_env::set(env);
         let key = token::storage_key::balance_key(&token, &receiver);
-        let balance: Option<Amount> = tx_host_env::with(|env| {
-            env.wl_storage.read(&key).expect("read error")
-        });
+        let balance: Option<Amount> =
+            tx_host_env::with(|env| env.state.read(&key).expect("read error"));
         assert_eq!(
             balance,
             Some(Amount::from_uint(200, ibc::ANY_DENOMINATION).unwrap())
         );
         let escrow: Option<Amount> = tx_host_env::with(|env| {
-            env.wl_storage.read(&escrow_key).expect("read error")
+            env.state.read(&escrow_key).expect("read error")
         });
         assert_eq!(
             escrow,
@@ -1685,10 +1596,7 @@ mod tests {
         writes.extend(channel_writes);
         writes.into_iter().for_each(|(key, val)| {
             tx_host_env::with(|env| {
-                env.wl_storage
-                    .storage
-                    .write(&key, &val)
-                    .expect("write error");
+                env.state.storage.write(&key, &val).expect("write error");
             });
         });
         // escrow in advance
@@ -1702,7 +1610,7 @@ mod tests {
         );
         let val = Amount::from_u64(100).serialize_to_vec();
         tx_host_env::with(|env| {
-            env.wl_storage
+            env.state
                 .storage
                 .write(&escrow_key, &val)
                 .expect("write error");
@@ -1756,12 +1664,11 @@ mod tests {
         let denom =
             format!("{}/{}/{}", dummy_src_port, dummy_src_channel, token);
         let key = ibc::balance_key_with_ibc_prefix(denom, &receiver);
-        let balance: Option<Amount> = tx_host_env::with(|env| {
-            env.wl_storage.read(&key).expect("read error")
-        });
+        let balance: Option<Amount> =
+            tx_host_env::with(|env| env.state.read(&key).expect("read error"));
         assert_eq!(balance, Some(Amount::from_u64(100)));
         let escrow: Option<Amount> = tx_host_env::with(|env| {
-            env.wl_storage.read(&escrow_key).expect("read error")
+            env.state.read(&escrow_key).expect("read error")
         });
         assert_eq!(escrow, Some(Amount::from_u64(0)));
     }
@@ -1787,10 +1694,7 @@ mod tests {
         writes.extend(channel_writes);
         writes.into_iter().for_each(|(key, val)| {
             tx_host_env::with(|env| {
-                env.wl_storage
-                    .storage
-                    .write(&key, &val)
-                    .expect("write error");
+                env.state.storage.write(&key, &val).expect("write error");
             })
         });
 
@@ -1812,14 +1716,11 @@ mod tests {
         let mut env = tx_host_env::take();
         env.commit_tx_and_block();
         // for the next block
-        env.wl_storage
+        env.state
             .storage
             .begin_block(BlockHash::default(), BlockHeight(2))
             .unwrap();
-        env.wl_storage
-            .storage
-            .set_header(tm_dummy_header())
-            .unwrap();
+        env.state.storage.set_header(tm_dummy_header()).unwrap();
         tx_host_env::set(env);
 
         // Start a transaction to notify the timeout
@@ -1877,10 +1778,7 @@ mod tests {
         writes.extend(channel_writes);
         writes.into_iter().for_each(|(key, val)| {
             tx_host_env::with(|env| {
-                env.wl_storage
-                    .storage
-                    .write(&key, &val)
-                    .expect("write error");
+                env.state.storage.write(&key, &val).expect("write error");
             })
         });
 
@@ -1901,14 +1799,11 @@ mod tests {
         let mut env = tx_host_env::take();
         env.commit_tx_and_block();
         // for the next block
-        env.wl_storage
+        env.state
             .storage
             .begin_block(BlockHash::default(), BlockHeight(2))
             .unwrap();
-        env.wl_storage
-            .storage
-            .set_header(tm_dummy_header())
-            .unwrap();
+        env.state.storage.set_header(tm_dummy_header()).unwrap();
         tx_host_env::set(env);
 
         // Start a transaction to notify the timing-out on closed

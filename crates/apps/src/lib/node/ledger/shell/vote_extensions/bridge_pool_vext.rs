@@ -29,9 +29,9 @@ where
     > + 'iter {
         vote_extensions.into_iter().map(|vote_extension| {
             validate_bp_roots_vext(
-                &self.wl_storage,
+                &self.state,
                 &vote_extension,
-                self.wl_storage.storage.get_last_block_height(),
+                self.state.in_mem().get_last_block_height(),
             )?;
             Ok(vote_extension)
         })
