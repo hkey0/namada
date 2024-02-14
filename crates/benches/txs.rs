@@ -6,6 +6,7 @@ use namada::account::{InitAccount, UpdateAccount};
 use namada::core::types::key::{
     common, SecretKey as SecretKeyInterface, SigScheme,
 };
+use namada::eth_bridge::storage::eth_bridge_queries::is_bridge_comptime_enabled;
 use namada::governance::pgf::storage::steward::StewardDetail;
 use namada::governance::storage::proposal::ProposalType;
 use namada::governance::storage::vote::ProposalVote;
@@ -863,6 +864,10 @@ fn unjail_validator(c: &mut Criterion) {
 }
 
 fn tx_bridge_pool(c: &mut Criterion) {
+    if !is_bridge_comptime_enabled() {
+        return;
+    }
+
     let shell = BenchShell::default();
 
     let data = PendingTransfer {
