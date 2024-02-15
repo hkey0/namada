@@ -3,10 +3,10 @@ use std::collections::HashMap;
 use namada::governance::pgf::storage::keys as pgf_storage;
 use namada::governance::pgf::storage::steward::StewardDetail;
 use namada::governance::pgf::{storage as pgf, ADDRESS};
-use namada::governance::storage::keys as gov_storage;
 use namada::governance::storage::proposal::{
     AddRemove, PGFAction, PGFTarget, ProposalType, StoragePgfFunding,
 };
+use namada::governance::storage::{keys as gov_storage, load_proposals};
 use namada::governance::utils::{
     compute_proposal_result, ProposalVotes, TallyResult, TallyType, TallyVote,
     VotePower,
@@ -35,9 +35,27 @@ pub struct ProposalsResult {
     rejected: Vec<u64>,
 }
 
-pub fn execute_governance_proposals<D, H>(
+pub fn load_and_execute_governance_proposals<D, H>(
     shell: &mut Shell<D, H>,
     response: &mut shim::response::FinalizeBlock,
+    current_epoch: Epoch,
+) -> Result<ProposalsResult>
+where
+    D: DB + for<'iter> DBIter<'iter> + Sync + 'static,
+    H: StorageHasher + Sync + 'static,
+{
+    let proposal_ids = load_proposals(&shell.wl_storage, current_epoch)?;
+
+    let proposals_result =
+        execute_governance_proposals(shell, response, proposal_ids)?;
+
+    Ok(proposals_result)
+}
+
+fn execute_governance_proposals<D, H>(
+    shell: &mut Shell<D, H>,
+    response: &mut shim::response::FinalizeBlock,
+    proposal_ids: BTreeSet<u64>,
 ) -> Result<ProposalsResult>
 where
     D: DB + for<'iter> DBIter<'iter> + Sync + 'static,
@@ -45,7 +63,7 @@ where
 {
     let mut proposals_result = ProposalsResult::default();
 
-    for id in std::mem::take(&mut shell.proposal_data) {
+    for id in proposal_ids {
         let proposal_funds_key = gov_storage::get_funds_key(id);
         let proposal_end_epoch_key = gov_storage::get_voting_end_epoch_key(id);
         let proposal_type_key = gov_storage::get_proposal_type_key(id);

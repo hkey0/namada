@@ -21,7 +21,7 @@ pub mod testing;
 pub mod utils;
 mod vote_extensions;
 
-use std::collections::{BTreeSet, HashSet};
+use std::collections::BTreeSet;
 use std::convert::{TryFrom, TryInto};
 use std::mem;
 use std::path::{Path, PathBuf};
@@ -357,8 +357,6 @@ where
     /// limit the how many block heights in the past can the storage be
     /// queried for reading values.
     storage_read_past_height_limit: Option<u64>,
-    /// Proposal execution tracking
-    pub proposal_data: HashSet<u64>,
     /// Log of events emitted by `FinalizeBlock` ABCI calls.
     event_log: EventLog,
 }
@@ -534,7 +532,6 @@ where
                 tx_wasm_compilation_cache as usize,
             ),
             storage_read_past_height_limit,
-            proposal_data: HashSet::new(),
             // TODO: config event log params
             event_log: EventLog::default(),
         };

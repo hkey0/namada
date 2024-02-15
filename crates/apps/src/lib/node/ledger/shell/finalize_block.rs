@@ -24,7 +24,7 @@ use namada::types::storage::{BlockHash, BlockResults, Epoch, Header};
 use namada::vote_ext::ethereum_events::MultiSignedEthEvent;
 use namada::vote_ext::ethereum_tx_data_variants;
 
-use super::governance::execute_governance_proposals;
+use super::governance::load_and_execute_governance_proposals;
 use super::*;
 use crate::facade::tendermint::abci::types::{Misbehavior, VoteInfo};
 use crate::node::ledger::shell::stats::InternalStats;
@@ -94,7 +94,11 @@ where
         if new_epoch {
             update_allowed_conversions(&mut self.wl_storage)?;
 
-            execute_governance_proposals(self, &mut response)?;
+            load_and_execute_governance_proposals(
+                self,
+                &mut response,
+                current_epoch,
+            )?;
 
             // Copy the new_epoch + pipeline_len - 1 validator set into
             // new_epoch + pipeline_len
@@ -850,7 +854,7 @@ fn pos_votes_from_abci(
 /// are covered by the e2e tests.
 #[cfg(test)]
 mod test_finalize_block {
-    use std::collections::{BTreeMap, BTreeSet, HashMap};
+    use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
     use std::num::NonZeroU64;
     use std::str::FromStr;
 
@@ -1642,7 +1646,6 @@ mod test_finalize_block {
         // Add a proposal to be executed on next epoch change.
         let mut add_proposal = |proposal_id, vote| {
             let validator = shell.mode.get_validator_address().unwrap().clone();
-            shell.proposal_data.insert(proposal_id);
 
             let proposal = InitProposalData {
                 id: proposal_id,
