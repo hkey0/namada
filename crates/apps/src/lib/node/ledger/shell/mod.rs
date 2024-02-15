@@ -1548,7 +1548,6 @@ where
         ))
     })?;
 
-    // FIXME: add unit test for out of gas
     if result.is_accepted() {
         Ok(())
     } else {
